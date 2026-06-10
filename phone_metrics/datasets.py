@@ -14,14 +14,55 @@ VoxAngeles empty/``sp``/``sil`` intervals are normalized to the silence token.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
+import panphon
 
 from .timit import SILENCE, Seg, merge_adjacent_silence, timit_segments
 
 # VoxAngeles TextGrid labels treated as silence.
 VOX_SILENCE_LABELS = frozenset({"", "sp", "sil", "sil+"})
+
+# Glyph confusables seen in the distributed transcriptions: not IPA, but a
+# look-alike of a representable phone. ASCII "g" for IPA script "ɡ"; the Cyrillic
+# ligature for Latin "æ". TODO: this belongs in an upstream IPA-normalization /
+# confusables table (panphon), not hand-maintained here.
+_HOMOGLYPHS = {"g": "ɡ", "ӕ": "æ"}
+
+
+@lru_cache(maxsize=1)
+def _feature_table() -> panphon.FeatureTable:
+    return panphon.FeatureTable()
+
+
+def canonical_ipa(label: str | None) -> str | None:
+    """Map a ground-truth IPA label to its canonical, scorable form.
+
+    Silence/``None`` pass through. A label panphon already knows is returned
+    unchanged. Otherwise we apply the homoglyph fixes and re-tokenize: if the
+    label reduces to exactly one known phone we return it (recovering diacritic
+    noise like ``k̚``->``k`` and confusables like ``g``->``ɡ``), and otherwise we
+    keep the label as-is so it stays unknown -- a genuine feature-space gap
+    (``ʡ``) or a multi-target segment (``aɪ``, ``w͡a``) that single-phone
+    recognition cannot produce, and which therefore counts as an error in the
+    exact-match metrics.
+
+    TODO: the single-phone recovery is lossy -- panphon drops contrastive marks
+    it cannot represent (``k'``->``k``, ``d̪̤ʱ``->``d̪̤``). Fixing that properly
+    belongs upstream in panphon's feature inventory, not here.
+    """
+    if label is None or label == SILENCE:
+        return label
+    ft = _feature_table()
+    if ft.seg_known(label):
+        return label
+    label = "".join(_HOMOGLYPHS.get(c, c) for c in label)
+    segs = ft.ipa_segs(label)
+    if len(segs) == 1 and ft.seg_known(segs[0]):
+        return segs[0]
+    return label
 
 
 @dataclass
@@ -83,6 +124,8 @@ def load_timit(
         if phn_path is None:
             raise FileNotFoundError(f"No .phn sibling for {wav_path}")
         segs = timit_segments(phn_path, merge_closures=merge_closures)
+        for seg in segs:
+            seg.ipa_label = canonical_ipa(seg.ipa_label)
         utts.append(Utterance(str(wav_path), "eng", split, segs))
     return utts
 
@@ -111,7 +154,7 @@ def load_voxangeles(root: str | Path) -> list[Utterance]:
         segs = []
         for entry in grid.getTier(tier_name).entries:
             label = (entry.label or "").strip()
-            ipa = SILENCE if label in VOX_SILENCE_LABELS else label
+            ipa = SILENCE if label in VOX_SILENCE_LABELS else canonical_ipa(label)
             segs.append(Seg(float(entry.start), float(entry.end), label, ipa))
         segs = merge_adjacent_silence(segs)
         utts.append(Utterance(str(grid_path.with_suffix(".wav")), language, "test", segs))

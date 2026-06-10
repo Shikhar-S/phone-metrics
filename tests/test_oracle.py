@@ -23,7 +23,6 @@ def test_oracle_accuracy_strips_edges_but_scores_internal_silence():
     result = oracle_phone_accuracy(
         [utt],
         ["_", "p", "t", "t", "_"],
-        "incorrect",
         label="ipa",
     )
 
@@ -32,13 +31,16 @@ def test_oracle_accuracy_strips_edges_but_scores_internal_silence():
     assert result.accuracy == pytest.approx(2 / 3)
 
 
-def test_oracle_accuracy_strips_prediction_edge_silence_when_gt_edge_absent():
-    utt = _utt("u1.wav", "eng", ["p", "t", "_"])
+def test_oracle_accuracy_drops_gt_edge_silence_positionally():
+    # Predictions are 1:1 with GT segments, and the recognizer may emit a
+    # non-silence label at a GT edge-silence segment. That segment is dropped
+    # positionally (with its aligned prediction), not by the prediction's value,
+    # so it never counts and the remaining predictions stay aligned.
+    utt = _utt("u1.wav", "eng", ["_", "p", "t"])
 
     result = oracle_phone_accuracy(
         [utt],
-        ["_", "p", "t"],
-        "incorrect",
+        ["a", "p", "t"],
         label="ipa",
     )
 

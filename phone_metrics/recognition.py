@@ -146,6 +146,14 @@ def phone_error_rates(
     and ``"raw"`` for :attr:`Seg.raw_label`. PFER is meaningful only for IPA,
     so ``pfer=None`` computes it for ``label="ipa"`` and skips it for
     ``label="raw"``. Passing ``pfer=True`` with a non-IPA label raises.
+
+    Note: PFER's feature edit distance is panphon's, which silently drops any
+    reference segment outside its feature inventory (a genuine gap such as
+    ``ʡ``). Such a segment still counts toward ``reference_total`` but adds no
+    feature cost, so PFER gives it a free pass -- intentional, since PFER is the
+    generous, feature-level metric (PER still counts it as a full error). It
+    also re-tokenizes multi-character labels, so a diphthong like ``aɪ`` is
+    scored as its two component phones rather than one opaque token.
     """
     if label not in ("ipa", "raw"):
         raise ValueError(f"label must be 'ipa' or 'raw', got {label!r}")

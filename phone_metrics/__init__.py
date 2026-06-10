@@ -6,7 +6,13 @@ oracle-boundary phone accuracy, PER/PFER phone recognition scoring, and
 ground-truth loaders that read TIMIT and VoxAngeles as distributed.
 """
 
-from .datasets import Utterance, boundary_secs, load_timit, load_voxangeles
+from .datasets import (
+    Utterance,
+    boundary_secs,
+    canonical_ipa,
+    load_timit,
+    load_voxangeles,
+)
 from .oracle import OracleAccuracy, oracle_phone_accuracy
 from .recognition import PhoneErrorRates, RecognitionCounts, phone_error_rates
 from .segmentation import PrecisionRecallMetric
@@ -18,6 +24,7 @@ __all__ = [
     "RecognitionCounts",
     "Utterance",
     "boundary_secs",
+    "canonical_ipa",
     "load_timit",
     "load_voxangeles",
     "oracle_phone_accuracy",
