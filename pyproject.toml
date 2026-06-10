@@ -13,6 +13,7 @@ authors = [{ name = "Stephen McIntosh" }]
 keywords = ["speech", "phone", "phoneme", "segmentation", "evaluation", "r-value", "per"]
 dependencies = [
     "numpy",
+    "panphon>=0.22.2",
     "praatio>=6.0",
 ]
 

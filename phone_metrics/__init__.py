@@ -1,20 +1,25 @@
 """phone-metrics: evaluation metrics for phone segmentation and recognition.
 
-Decoupled from the models that produce boundaries/labels. Currently provides
-raw boundary-level segmentation scoring (:class:`PrecisionRecallMetric`) plus
+Decoupled from the models that produce boundaries/labels. Provides raw
+boundary-level segmentation scoring (:class:`PrecisionRecallMetric`),
+oracle-boundary phone accuracy, PER/PFER phone recognition scoring, and
 ground-truth loaders that read TIMIT and VoxAngeles as distributed.
 """
 
 from .datasets import Utterance, boundary_secs, load_timit, load_voxangeles
 from .oracle import OracleAccuracy, oracle_phone_accuracy
+from .recognition import PhoneErrorRates, RecognitionCounts, phone_error_rates
 from .segmentation import PrecisionRecallMetric
 
 __all__ = [
     "OracleAccuracy",
+    "PhoneErrorRates",
     "PrecisionRecallMetric",
+    "RecognitionCounts",
     "Utterance",
     "boundary_secs",
     "load_timit",
     "load_voxangeles",
     "oracle_phone_accuracy",
+    "phone_error_rates",
 ]

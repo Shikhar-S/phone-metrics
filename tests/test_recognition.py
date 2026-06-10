@@ -1,0 +1,108 @@
+import pytest
+
+from phone_metrics.datasets import Utterance
+from phone_metrics.recognition import phone_error_rates
+from phone_metrics.timit import Seg
+
+
+def _utt(audio_path, language, labels):
+    return Utterance(
+        audio_path=audio_path,
+        language=language,
+        split="test",
+        segments=[
+            Seg(float(i), float(i + 1), raw_label=label, ipa_label=label)
+            for i, label in enumerate(labels)
+        ],
+    )
+
+
+def test_per_strips_only_edge_silence():
+    utt = _utt("u1.wav", "eng", ["_", "p", "eɪ", "t", "_"])
+
+    result = phone_error_rates([utt], [["_", "p", "aɪ", "t"]], pfer=False)
+
+    assert result.per_edits == 1
+    assert result.reference_total == 3
+    assert result.per == pytest.approx(1 / 3)
+    assert result.macro_language_per == pytest.approx(1 / 3)
+    assert result.macro_utterance_per == pytest.approx(1 / 3)
+
+
+def test_per_scores_internal_silence():
+    utt = _utt("u1.wav", "eng", ["_", "p", "_", "t", "_"])
+
+    result = phone_error_rates([utt], [["_", "p", "t", "_"]], pfer=False)
+
+    assert result.per_edits == 1
+    assert result.reference_total == 3
+    assert result.per == pytest.approx(1 / 3)
+
+
+def test_micro_and_macro_language_per_are_reported_separately():
+    utts = [
+        _utt("u1.wav", "eng", ["p", "eɪ", "t"]),
+        _utt("u2.wav", "fra", ["a", "b", "c", "d", "e"]),
+    ]
+
+    result = phone_error_rates(
+        utts,
+        [["b", "eɪ", "t"], ["a", "b", "c", "d", "x"]],
+        pfer=False,
+    )
+
+    assert result.per == pytest.approx(2 / 8)
+    assert result.per_language["eng"].per == pytest.approx(1 / 3)
+    assert result.per_language["fra"].per == pytest.approx(1 / 5)
+    assert result.macro_language_per == pytest.approx((1 / 3 + 1 / 5) / 2)
+
+
+def test_pfer_uses_panphon_for_ipa(monkeypatch):
+    utt = _utt("u1.wav", "eng", ["p", "eɪ", "t"])
+
+    class FakeDistance:
+        def feature_edit_distance(self, predicted, reference):
+            assert predicted == "paɪt"
+            assert reference == "peɪt"
+            return 1.5
+
+    monkeypatch.setattr("phone_metrics.recognition.panphon.distance.Distance", FakeDistance)
+
+    result = phone_error_rates([utt], [["p", "aɪ", "t"]], label="ipa")
+
+    assert result.pfer_cost == pytest.approx(1.5)
+    assert result.pfer == pytest.approx(0.5)
+    assert result.macro_language_pfer == pytest.approx(0.5)
+    assert result.macro_utterance_pfer == pytest.approx(0.5)
+
+
+def test_raw_per_skips_pfer_by_default():
+    utt = Utterance(
+        audio_path="u1.wav",
+        language="eng",
+        split="test",
+        segments=[
+            Seg(0.0, 1.0, raw_label="bcl", ipa_label="b"),
+            Seg(1.0, 2.0, raw_label="iy", ipa_label="i"),
+        ],
+    )
+
+    result = phone_error_rates([utt], [["bcl", "ih"]], label="raw")
+
+    assert result.per == pytest.approx(1 / 2)
+    with pytest.raises(ValueError, match="PFER was not computed"):
+        result.pfer
+
+
+def test_pfer_with_raw_labels_raises():
+    utt = _utt("u1.wav", "eng", ["p"])
+
+    with pytest.raises(ValueError, match="PFER can only be computed"):
+        phone_error_rates([utt], [["p"]], label="raw", pfer=True)
+
+
+def test_prediction_count_must_match_utterance_count():
+    utt = _utt("u1.wav", "eng", ["p"])
+
+    with pytest.raises(ValueError, match="got 0 predictions for 1 utterances"):
+        phone_error_rates([utt], [])

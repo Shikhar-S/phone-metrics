@@ -14,8 +14,9 @@ the model cannot score (e.g. a diphthong with no single target vector, or a
 phone outside a language's restricted vocabulary) is passed as ``None``; the
 required ``none_is`` argument decides whether such a segment is ``"ignored"``
 (dropped from the denominator) or counted as ``"incorrect"`` (in the
-denominator, never correct). Silence segments (``ipa_label == "_"``) are
-intrinsically unscorable and are always dropped regardless of the prediction.
+denominator, never correct). At most one leading and one trailing silence
+segment (``ipa_label == "_"``) are stripped independently from reference and
+prediction before scoring; internal silence segments are scored normally.
 
 Both notebook metrics reduce to this call:
 
@@ -30,6 +31,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+import numpy as np
+
 from .datasets import Utterance
 from .timit import SILENCE
 
@@ -39,7 +42,7 @@ class OracleAccuracy:
     """Result of :func:`oracle_phone_accuracy`.
 
     ``per_language`` maps each language to its ``(correct, total)`` counts over
-    scored (non-silence, non-``None``) segments.
+    scored (non-silence, non-``None``) segments, in sorted language order.
     """
 
     correct: int
@@ -55,7 +58,16 @@ class OracleAccuracy:
     def macro_language(self) -> float:
         """Mean of the per-language accuracies (unweighted by segment count)."""
         accs = [c / t for c, t in self.per_language.values()]
-        return sum(accs) / len(accs)
+        return float(np.mean(accs))
+
+
+def _strip_edge_silence(seq: Sequence, *, is_silence) -> list:
+    seq = list(seq)
+    if seq and is_silence(seq[0]):
+        seq = seq[1:]
+    if seq and is_silence(seq[-1]):
+        seq = seq[:-1]
+    return seq
 
 
 def oracle_phone_accuracy(
@@ -84,26 +96,61 @@ def oracle_phone_accuracy(
         raise ValueError(f"label must be 'ipa' or 'raw', got {label!r}")
     attr = f"{label}_label"
 
-    segs = [(utt, seg) for utt in utterances for seg in utt.segments]
-    if len(predictions) != len(segs):
+    total_segments = sum(len(utt.segments) for utt in utterances)
+    if len(predictions) != total_segments:
         raise ValueError(
-            f"got {len(predictions)} predictions for {len(segs)} ground-truth segments"
+            f"got {len(predictions)} predictions for {total_segments} ground-truth segments"
         )
 
-    per_language: dict[str, list[int]] = {}
-    for (utt, seg), pred in zip(segs, predictions):
-        if seg.ipa_label == SILENCE:
-            continue
-        if pred is None and none_is == "ignored":
-            continue
-        counts = per_language.setdefault(utt.language, [0, 0])
-        counts[0] += int(pred is not None and getattr(seg, attr) == pred)
-        counts[1] += 1
+    # Single Python pass to pull the scored field, the silence marker, the
+    # prediction, and the language off each Seg; everything after this is
+    # vectorized.
+    gt, ipa, lang, pred = [], [], [], []
+    offset = 0
+    for utt in utterances:
+        utt_predictions = predictions[offset : offset + len(utt.segments)]
+        offset += len(utt.segments)
 
-    if not per_language:
+        ref = [(getattr(seg, attr), seg.ipa_label, utt.language) for seg in utt.segments]
+        ref = _strip_edge_silence(ref, is_silence=lambda item: item[1] == SILENCE)
+        pred_labels = _strip_edge_silence(
+            utt_predictions,
+            is_silence=lambda item: item == SILENCE,
+        )
+        if len(pred_labels) != len(ref):
+            raise ValueError(
+                f"after edge-silence stripping, {utt.audio_path} has "
+                f"{len(pred_labels)} predictions for {len(ref)} reference segments"
+            )
+
+        for (gt_label, ipa_label, language), pred_label in zip(ref, pred_labels, strict=True):
+            gt.append(gt_label)
+            ipa.append(ipa_label)
+            lang.append(utt.language)
+            pred.append(pred_label)
+
+    gt = np.array(gt, dtype=object)
+    ipa = np.array(ipa, dtype=object)
+    lang = np.array(lang, dtype=object)
+    pred = np.array(pred, dtype=object)
+
+    is_none = np.fromiter((p is None for p in pred), dtype=bool, count=len(pred))
+    scored = np.ones(len(pred), dtype=bool) if none_is == "incorrect" else ~is_none
+    if not scored.any():
         raise ValueError("no scorable segments (all silence or None predictions)")
 
-    per_lang = {lang: (c, t) for lang, (c, t) in per_language.items()}
-    correct = sum(c for c, _ in per_lang.values())
-    total = sum(t for _, t in per_lang.values())
-    return OracleAccuracy(correct=correct, total=total, per_language=per_lang)
+    correct = scored & ~is_none & (gt == pred)
+
+    # Per-language (correct, total) via bincount over the scored subset.
+    sel = np.flatnonzero(scored)
+    langs, inv = np.unique(lang[sel], return_inverse=True)
+    totals = np.bincount(inv, minlength=langs.size)
+    corrects = np.bincount(inv[correct[sel]], minlength=langs.size)
+    per_language = {
+        str(lg): (int(c), int(t)) for lg, c, t in zip(langs, corrects, totals)
+    }
+    return OracleAccuracy(
+        correct=int(corrects.sum()),
+        total=int(totals.sum()),
+        per_language=per_language,
+    )
