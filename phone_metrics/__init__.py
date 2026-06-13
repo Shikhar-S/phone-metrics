@@ -12,6 +12,7 @@ from .datasets import (
     canonical_ipa,
     load_timit,
     load_voxangeles,
+    tokenize_ipa,
 )
 from .oracle import OracleAccuracy, oracle_phone_accuracy
 from .recognition import PhoneErrorRates, RecognitionCounts, phone_error_rates
@@ -29,4 +30,5 @@ __all__ = [
     "load_voxangeles",
     "oracle_phone_accuracy",
     "phone_error_rates",
+    "tokenize_ipa",
 ]
