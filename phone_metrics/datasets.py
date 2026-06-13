@@ -37,6 +37,11 @@ def _feature_table() -> panphon.FeatureTable:
     return panphon.FeatureTable()
 
 
+def tokenize_ipa(label: str) -> list[str]:
+    """Split an IPA string into its component phones (``"aɪ" -> ["a", "ɪ"]``)."""
+    return _feature_table().ipa_segs(label)
+
+
 def canonical_ipa(label: str | None) -> str | None:
     """Map a ground-truth IPA label to its canonical, scorable form.
 

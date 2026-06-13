@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 import panphon.distance
 
-from .datasets import Utterance, _feature_table
+from .datasets import Utterance, tokenize_ipa
 from .timit import SILENCE
 
 
@@ -119,23 +119,19 @@ def _reference_labels(utterance: Utterance, label: str) -> list[str]:
     return labels
 
 
-def _expand_phones(labels: Sequence[str], ft) -> list[str]:
+def _expand_phones(labels: Sequence[str]) -> list[str]:
     """Split each IPA label into its component phones (diphthongs -> two tokens).
 
-    Uses panphon's tokenizer (the same one :func:`canonical_ipa` relies on), so
-    ``"aɪ"`` becomes ``["a", "ɪ"]`` while tie-barred affricates (``"t͡ʃ"``),
-    syllabics (``"m̩"``), and rhotics (``"ɜ˞"``) stay a single segment. The
-    silence token passes through untouched, and a genuinely unknown segment
-    (``ipa_segs`` returns nothing, e.g. ``"ʡ"``) is kept as one token so it
-    still counts as a scorable error.
+    Silence passes through untouched, and a label panphon does not recognize
+    (e.g. ``"ʡ"``) is kept as one token so it still counts as a scorable error.
     """
     out: list[str] = []
     for label in labels:
         if label == SILENCE:
             out.append(label)
             continue
-        segs = ft.ipa_segs(label)
-        out.extend(segs if segs else [label])
+        phones = tokenize_ipa(label)
+        out.extend(phones if phones else [label])
     return out
 
 
@@ -187,17 +183,16 @@ def phone_error_rates(
         raise ValueError("PFER can only be computed for IPA predictions; use label='ipa'")
 
     dist = panphon.distance.Distance() if compute_pfer else None
-    # IPA labels are split into component phones (diphthongs -> two tokens);
-    # raw TIMIT tokens are not IPA, so they stay one token per segment.
-    ft = _feature_table() if label == "ipa" else None
+    # Raw TIMIT tokens are not IPA, so they are never split into phones.
+    expand = label == "ipa"
     per_language: dict[str, list[int | float]] = {}
     per_utterance = []
 
     for utterance, predicted in zip(utterances, predictions):
         reference = _reference_labels(utterance, label)
-        if ft is not None:
-            predicted = _expand_phones(predicted, ft)
-            reference = _expand_phones(reference, ft)
+        if expand:
+            predicted = _expand_phones(predicted)
+            reference = _expand_phones(reference)
         pred = _strip_edge_silence(predicted)
         ref = _strip_edge_silence(reference)
         if not ref:
