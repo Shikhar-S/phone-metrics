@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 import panphon.distance
 
-from .datasets import Utterance
+from .datasets import Utterance, _feature_table
 from .timit import SILENCE
 
 
@@ -119,6 +119,26 @@ def _reference_labels(utterance: Utterance, label: str) -> list[str]:
     return labels
 
 
+def _expand_phones(labels: Sequence[str], ft) -> list[str]:
+    """Split each IPA label into its component phones (diphthongs -> two tokens).
+
+    Uses panphon's tokenizer (the same one :func:`canonical_ipa` relies on), so
+    ``"aɪ"`` becomes ``["a", "ɪ"]`` while tie-barred affricates (``"t͡ʃ"``),
+    syllabics (``"m̩"``), and rhotics (``"ɜ˞"``) stay a single segment. The
+    silence token passes through untouched, and a genuinely unknown segment
+    (``ipa_segs`` returns nothing, e.g. ``"ʡ"``) is kept as one token so it
+    still counts as a scorable error.
+    """
+    out: list[str] = []
+    for label in labels:
+        if label == SILENCE:
+            out.append(label)
+            continue
+        segs = ft.ipa_segs(label)
+        out.extend(segs if segs else [label])
+    return out
+
+
 def _strip_edge_silence(labels: Sequence[str]) -> list[str]:
     labels = list(labels)
     if labels and labels[0] == SILENCE:
@@ -138,9 +158,13 @@ def phone_error_rates(
     """Score phone recognition predictions with PER and, for IPA, PFER.
 
     ``predictions`` is one phone-label sequence per utterance. Its length must
-    equal ``len(utterances)``. At most one leading and one trailing silence
-    label (``"_"``) are stripped independently from reference and prediction
-    before scoring; internal silence labels are scored normally.
+    equal ``len(utterances)``. For IPA scoring, both reference and prediction
+    labels are first split into their component phones, so a diphthong like
+    ``aɪ`` becomes the two tokens ``a``, ``ɪ`` for *both* PER and PFER (and
+    counts as two toward ``reference_total``); tie-barred affricates such as
+    ``t͡ʃ`` stay a single token. At most one leading and one trailing silence
+    label (``"_"``) are then stripped independently from reference and
+    prediction; internal silence labels are scored normally.
 
     ``label`` selects the reference labels: ``"ipa"`` for :attr:`Seg.ipa_label`
     and ``"raw"`` for :attr:`Seg.raw_label`. PFER is meaningful only for IPA,
@@ -151,9 +175,7 @@ def phone_error_rates(
     reference segment outside its feature inventory (a genuine gap such as
     ``ʡ``). Such a segment still counts toward ``reference_total`` but adds no
     feature cost, so PFER gives it a free pass -- intentional, since PFER is the
-    generous, feature-level metric (PER still counts it as a full error). It
-    also re-tokenizes multi-character labels, so a diphthong like ``aɪ`` is
-    scored as its two component phones rather than one opaque token.
+    generous, feature-level metric (PER still counts it as a full error).
     """
     if label not in ("ipa", "raw"):
         raise ValueError(f"label must be 'ipa' or 'raw', got {label!r}")
@@ -165,12 +187,19 @@ def phone_error_rates(
         raise ValueError("PFER can only be computed for IPA predictions; use label='ipa'")
 
     dist = panphon.distance.Distance() if compute_pfer else None
+    # IPA labels are split into component phones (diphthongs -> two tokens);
+    # raw TIMIT tokens are not IPA, so they stay one token per segment.
+    ft = _feature_table() if label == "ipa" else None
     per_language: dict[str, list[int | float]] = {}
     per_utterance = []
 
     for utterance, predicted in zip(utterances, predictions):
+        reference = _reference_labels(utterance, label)
+        if ft is not None:
+            predicted = _expand_phones(predicted, ft)
+            reference = _expand_phones(reference, ft)
         pred = _strip_edge_silence(predicted)
-        ref = _strip_edge_silence(_reference_labels(utterance, label))
+        ref = _strip_edge_silence(reference)
         if not ref:
             continue
 

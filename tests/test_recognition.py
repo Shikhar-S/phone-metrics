@@ -20,13 +20,25 @@ def _utt(audio_path, language, labels):
 def test_per_strips_only_edge_silence():
     utt = _utt("u1.wav", "eng", ["_", "p", "eɪ", "t", "_"])
 
+    # The diphthongs split into component phones: ref p/e/ɪ/t, pred p/a/ɪ/t.
     result = phone_error_rates([utt], [["_", "p", "aɪ", "t"]], pfer=False)
 
     assert result.per_edits == 1
-    assert result.reference_total == 3
-    assert result.per == pytest.approx(1 / 3)
-    assert result.macro_language_per == pytest.approx(1 / 3)
-    assert result.macro_utterance_per == pytest.approx(1 / 3)
+    assert result.reference_total == 4
+    assert result.per == pytest.approx(1 / 4)
+    assert result.macro_language_per == pytest.approx(1 / 4)
+    assert result.macro_utterance_per == pytest.approx(1 / 4)
+
+
+def test_per_splits_diphthongs_into_component_phones():
+    utt = _utt("u1.wav", "eng", ["p", "aɪ", "t"])
+
+    # A two-phone prediction matching the diphthong's components scores 0.
+    result = phone_error_rates([utt], [["p", "a", "ɪ", "t"]], pfer=False)
+
+    assert result.reference_total == 4
+    assert result.per_edits == 0
+    assert result.per == pytest.approx(0.0)
 
 
 def test_per_scores_internal_silence():
@@ -51,10 +63,11 @@ def test_micro_and_macro_language_per_are_reported_separately():
         pfer=False,
     )
 
-    assert result.per == pytest.approx(2 / 8)
-    assert result.per_language["eng"].per == pytest.approx(1 / 3)
+    # eng "eɪ" splits into two phones -> 4 reference tokens, 1 edit (p/b).
+    assert result.per == pytest.approx(2 / 9)
+    assert result.per_language["eng"].per == pytest.approx(1 / 4)
     assert result.per_language["fra"].per == pytest.approx(1 / 5)
-    assert result.macro_language_per == pytest.approx((1 / 3 + 1 / 5) / 2)
+    assert result.macro_language_per == pytest.approx((1 / 4 + 1 / 5) / 2)
 
 
 def test_pfer_uses_panphon_for_ipa(monkeypatch):
@@ -70,10 +83,13 @@ def test_pfer_uses_panphon_for_ipa(monkeypatch):
 
     result = phone_error_rates([utt], [["p", "aɪ", "t"]], label="ipa")
 
+    # Joined expanded tokens are identical to the joined labels ("peɪt"), so
+    # the feature cost is unchanged; only reference_total grows to 4 (diphthong
+    # split), so PFER divides by 4.
     assert result.pfer_cost == pytest.approx(1.5)
-    assert result.pfer == pytest.approx(0.5)
-    assert result.macro_language_pfer == pytest.approx(0.5)
-    assert result.macro_utterance_pfer == pytest.approx(0.5)
+    assert result.pfer == pytest.approx(1.5 / 4)
+    assert result.macro_language_pfer == pytest.approx(1.5 / 4)
+    assert result.macro_utterance_pfer == pytest.approx(1.5 / 4)
 
 
 def test_raw_per_skips_pfer_by_default():
