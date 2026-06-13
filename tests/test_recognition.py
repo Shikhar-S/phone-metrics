@@ -17,18 +17,6 @@ def _utt(audio_path, language, labels):
     )
 
 
-def test_per_strips_only_edge_silence():
-    utt = _utt("u1.wav", "eng", ["_", "p", "eɪ", "t", "_"])
-
-    result = phone_error_rates([utt], [["_", "p", "aɪ", "t"]], pfer=False)
-
-    assert result.per_edits == 1
-    assert result.reference_total == 4
-    assert result.per == pytest.approx(1 / 4)
-    assert result.macro_language_per == pytest.approx(1 / 4)
-    assert result.macro_utterance_per == pytest.approx(1 / 4)
-
-
 def test_per_splits_diphthongs_into_component_phones():
     utt = _utt("u1.wav", "eng", ["p", "aɪ", "t"])
 
@@ -37,16 +25,6 @@ def test_per_splits_diphthongs_into_component_phones():
     assert result.reference_total == 4
     assert result.per_edits == 0
     assert result.per == pytest.approx(0.0)
-
-
-def test_per_scores_internal_silence():
-    utt = _utt("u1.wav", "eng", ["_", "p", "_", "t", "_"])
-
-    result = phone_error_rates([utt], [["_", "p", "t", "_"]], pfer=False)
-
-    assert result.per_edits == 1
-    assert result.reference_total == 3
-    assert result.per == pytest.approx(1 / 3)
 
 
 def test_micro_and_macro_language_per_are_reported_separately():

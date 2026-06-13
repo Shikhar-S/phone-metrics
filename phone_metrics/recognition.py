@@ -135,15 +135,6 @@ def _expand_phones(labels: Sequence[str]) -> list[str]:
     return out
 
 
-def _strip_edge_silence(labels: Sequence[str]) -> list[str]:
-    labels = list(labels)
-    if labels and labels[0] == SILENCE:
-        labels = labels[1:]
-    if labels and labels[-1] == SILENCE:
-        labels = labels[:-1]
-    return labels
-
-
 def phone_error_rates(
     utterances: Sequence[Utterance],
     predictions: Sequence[Sequence[str]],
@@ -158,9 +149,9 @@ def phone_error_rates(
     labels are first split into their component phones, so a diphthong like
     ``aɪ`` becomes the two tokens ``a``, ``ɪ`` for *both* PER and PFER (and
     counts as two toward ``reference_total``); tie-barred affricates such as
-    ``t͡ʃ`` stay a single token. At most one leading and one trailing silence
-    label (``"_"``) are then stripped independently from reference and
-    prediction; internal silence labels are scored normally.
+    ``t͡ʃ`` stay a single token. Silence labels (``"_"``) receive no special
+    handling: they are scored as ordinary tokens wherever they occur,
+    including at the edges, so this is a plain token error rate.
 
     ``label`` selects the reference labels: ``"ipa"`` for :attr:`Seg.ipa_label`
     and ``"raw"`` for :attr:`Seg.raw_label`. PFER is meaningful only for IPA,
@@ -193,21 +184,19 @@ def phone_error_rates(
         if expand:
             predicted = _expand_phones(predicted)
             reference = _expand_phones(reference)
-        pred = _strip_edge_silence(predicted)
-        ref = _strip_edge_silence(reference)
-        if not ref:
+        if not reference:
             continue
 
-        per_edits = _levenshtein(pred, ref)
+        per_edits = _levenshtein(predicted, reference)
         pfer_cost = (
-            float(dist.feature_edit_distance("".join(pred), "".join(ref)))
+            float(dist.feature_edit_distance("".join(predicted), "".join(reference)))
             if dist
             else None
         )
         per_utterance.append(
             RecognitionCounts(
                 per_edits=per_edits,
-                reference_total=len(ref),
+                reference_total=len(reference),
                 utterances=1,
                 pfer_cost=pfer_cost,
             )
@@ -215,7 +204,7 @@ def phone_error_rates(
 
         counts = per_language.setdefault(utterance.language, [0, 0, 0, 0.0])
         counts[0] += per_edits
-        counts[1] += len(ref)
+        counts[1] += len(reference)
         counts[2] += 1
         if pfer_cost is not None:
             counts[3] += pfer_cost
